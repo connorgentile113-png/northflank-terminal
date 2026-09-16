@@ -1,0 +1,8 @@
+{
+  "rules": {
+    "tunnel": {
+      ".read": true,
+      ".write": false
+    }
+  }
+}

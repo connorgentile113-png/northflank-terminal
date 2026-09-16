@@ -1,0 +1,86 @@
+{
+  "name": "Free Educational Coding Machine",
+  "description": "Browser-accessible Linux terminal: nginx serves the UI, ttyd the terminal, and every port preview through one ngrok tunnel.",
+
+  "billing": {
+    "deploymentPlan": "nf-compute-20"
+  },
+
+  "build": {
+    "buildSource": "git",
+    "vcsData": {
+      "projectUrl": "https://github.com/YOUR-ACCOUNT/YOUR-REPO",
+      "projectType": "github",
+      "projectBranch": "main"
+    },
+    "buildSettings": {
+      "storage": {
+        "ephemeralStorage": {
+          "storageSize": 16384
+        }
+      },
+      "dockerfile": {
+        "buildEngine": "buildkit",
+        "dockerFilePath": "/northflank-terminal/Dockerfile",
+        "dockerWorkDir": "/northflank-terminal",
+        "buildkit": {
+          "useCache": true,
+          "cacheStorageSize": 16384
+        }
+      }
+    }
+  },
+
+  "deployment": {
+    "instances": 1,
+    "docker": {
+      "configType": "default"
+    },
+    "storage": {
+      "ephemeralStorage": {
+        "storageSize": 1024
+      },
+      "shmSize": 128
+    }
+  },
+
+  "ports": [
+    {
+      "name": "http",
+      "internalPort": 8080,
+      "public": true,
+      "vpcAccessible": false,
+      "protocol": "HTTP"
+    }
+  ],
+
+  "healthChecks": [
+    {
+      "protocol": "HTTP",
+      "type": "readinessProbe",
+      "path": "/",
+      "port": 8080,
+      "initialDelaySeconds": 20,
+      "periodSeconds": 30,
+      "timeoutSeconds": 5,
+      "failureThreshold": 6,
+      "successThreshold": 1
+    }
+  ],
+
+  "runtimeEnvironment": {
+    "NGROK_AUTHTOKEN": "REPLACE_WITH_NGROK_AUTHTOKEN",
+    "NGINX_PORT": "8080",
+    "TTYD_PORT": "7681",
+    "TTYD_BASE_PATH": "/terminal",
+    "NGROK_API": "http://127.0.0.1:4040/api/tunnels",
+    "FIREBASE_DATABASE_URL": "https://vps-server-2bcbd-default-rtdb.firebaseio.com",
+    "FIREBASE_TUNNEL_PATH": "/tunnel/url.json",
+    "FIREBASE_DB_SECRET": "",
+    "TUNNEL_POLL_INTERVAL": "20",
+    "TUNNEL_REFRESH_INTERVAL": "600",
+    "PORT_LIST": "3000 4200 5173 8000 8080 8888",
+    "TERMINAL_USER": "",
+    "TERMINAL_PASSWORD": ""
+  }
+}

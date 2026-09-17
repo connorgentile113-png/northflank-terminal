@@ -20,8 +20,10 @@ set -uo pipefail
 NGROK_API="${NGROK_API:-http://127.0.0.1:4040/api/tunnels}"
 FIREBASE_DATABASE_URL="${FIREBASE_DATABASE_URL:-https://vps-server-2bcbd-default-rtdb.firebaseio.com}"
 FIREBASE_TUNNEL_PATH="${FIREBASE_TUNNEL_PATH:-/tunnel/url.json}"
-# Optional: a Realtime Database secret, for when the rules are tightened from
-# "open mode" to ".write": false / authenticated writes.
+# A Realtime Database secret. The shipped firebase-rules.json allows anonymous
+# reads but requires `auth != null` to write, so publishing the URL needs this:
+# the PUT below is sent with "?auth=<secret>" once it is set. The secret is also
+# the fallback if the database is switched back to ".write": false.
 FIREBASE_DB_SECRET="${FIREBASE_DB_SECRET:-}"
 POLL_INTERVAL="${TUNNEL_POLL_INTERVAL:-20}"
 REFRESH_INTERVAL="${TUNNEL_REFRESH_INTERVAL:-600}"
@@ -77,9 +79,22 @@ publish() {
             return 0
             ;;
         401|403)
-            log "Firebase refused the write (HTTP ${status}) — the rules are locked to read-only."
-            log "  Fix: keep ${FIREBASE_TUNNEL_PATH} writable in the database rules (see firebase-rules.json),"
-            log "  or set FIREBASE_DB_SECRET to a database secret so the PUT authenticates."
+            # Only once: this is retried on every poll, and repeating the same
+            # six lines every ${POLL_INTERVAL}s buries everything else in the log.
+            if [ "${auth_hint_shown}" -eq 0 ]; then
+                auth_hint_shown=1
+                log "Firebase refused the write (HTTP ${status}) — ${FIREBASE_TUNNEL_PATH} is read-only for this request."
+                if [ -z "${FIREBASE_DB_SECRET}" ]; then
+                    log "  No credential was supplied. firebase-rules.json reads \"auth != null\" for writes, so set"
+                    log "  FIREBASE_DB_SECRET to a database secret (Firebase console -> Project settings ->"
+                    log "  Service accounts -> Database secrets) and restart the service."
+                else
+                    log "  A credential was supplied but rejected — FIREBASE_DB_SECRET is wrong, revoked, or not"
+                    log "  a Realtime Database secret."
+                fi
+                log "  This is not fatal: the URL is still on the [tunnel] line above and in /run/tunnel-url."
+                log "  Only the Firebase lookup goes stale."
+            fi
             ;;
         000)
             log "Firebase unreachable (curl: $(tr -d '\n' < /tmp/fb-write.err 2>/dev/null | tail -c 200))"
@@ -98,6 +113,8 @@ log "publishing to $(firebase_endpoint)"
 
 last_url=""
 last_publish=0
+auth_hint_shown=0
+mirror_warned=0
 
 while true; do
     url="$(fetch_public_url)"
@@ -111,7 +128,17 @@ while true; do
 
     if [ "${url}" != "${last_url}" ]; then
         log "ngrok public URL: ${url}"
-        printf '%s\n' "${url}" >/run/tunnel-url 2>/dev/null || true
+        # Mirror for `cat /run/tunnel-url` inside the container. root owns /run,
+        # so this only fails if the image changed the layout — say so once
+        # rather than claiming the file is there when it is not.
+        # Subshell: a redirection failure is reported by bash itself, so the
+        # 2>/dev/null only takes effect if it applies to the whole command.
+        if ! ( printf '%s\n' "${url}" >/run/tunnel-url ) 2>/dev/null; then
+            if [ "${mirror_warned}" -eq 0 ]; then
+                mirror_warned=1
+                log "  note: cannot write /run/tunnel-url (not root?); read the URL from the line above"
+            fi
+        fi
         if publish "${url}"; then
             last_url="${url}"
             last_publish="${now}"

@@ -27,7 +27,7 @@ asynchronously so a blocked font request cannot stall the page.
 | `nginx.conf` | one HTTP surface: static UI, ttyd proxy, dynamic port proxy with asset rewriting |
 | `index.html` | the entire frontend — landing page, terminal shell, sliding Ports panel |
 | `tunnel-url-writer.sh` | ngrok local API → `PUT /tunnel/url.json` on Firebase (plain curl, no SDK) |
-| `firebase-rules.json` | Realtime Database rules: public read of `tunnel`, writes off |
+| `firebase-rules.json` | Realtime Database rules: public read of `tunnel`, authenticated writes only |
 | `northflank.json` | combined-service resource definition (Dockerfile build, port 8080, health check) |
 
 ## Deploy on Northflank
@@ -58,7 +58,7 @@ asynchronously so a blocked font request cannot stall the page.
    | `NGROK_AUTHTOKEN` | the ngrok agent token (required for a stable tunnel) |
    | `FIREBASE_DATABASE_URL` | `https://vps-server-2bcbd-default-rtdb.firebaseio.com` |
    | `FIREBASE_TUNNEL_PATH` | `/tunnel/url.json` |
-   | `FIREBASE_DB_SECRET` | optional — only needed once Firebase writes are authenticated |
+   | `FIREBASE_DB_SECRET` | a Realtime Database secret — **required** once you deploy `firebase-rules.json` |
    | `PORT_LIST` | the ports pre-listed in the UI panel |
    | `TERMINAL_PASSWORD`, `TERMINAL_USER` | optional basic auth for `/terminal/` and `/port/*/` |
 
@@ -71,19 +71,32 @@ asynchronously so a blocked font request cannot stall the page.
 
 ### Deploying the Firebase rules
 
-`firebase-rules.json` publishes `tunnel` for public reading and disables writes:
+`firebase-rules.json` publishes `tunnel` for public reading while requiring a
+credential to write:
+
+```json
+{ "rules": { "tunnel": { ".read": true, ".write": "auth != null" } } }
+```
 
 ```bash
 firebase deploy --only database
 # or paste the JSON into the Realtime Database → Rules tab
 ```
 
-> **Writes vs. rules.** The rules above set `".write": false`, so the
-> container's `PUT` only succeeds while the database is still in open/test mode.
-> The moment you deploy these rules the writer starts reporting `HTTP 401`, and
-> the logs say so explicitly. To keep publishing with the rules in place, use a
-> database secret (Project settings → Service accounts → Database secrets) and
-> set `FIREBASE_DB_SECRET` — the writer then sends `?auth=<secret>`.
+> **Then set `FIREBASE_DB_SECRET`.** `"auth != null"` means an *unauthenticated*
+> `PUT` is rejected, so the writer needs a credential: create a database secret
+> (Project settings → Service accounts → Database secrets), put it in
+> `FIREBASE_DB_SECRET`, and the writer sends `?auth=<secret>` on every publish.
+> Until then the writer logs `HTTP 401` **once** with these instructions and then
+> stays quiet — the container is unaffected, only the Firebase lookup is stale,
+> and the current URL is always on the `[tunnel]` log line and in
+> `/run/tunnel-url`.
+>
+> This is deliberately *not* `".write": false`: that closes the door on the
+> container's own `PUT` as well, since the writer has no other identity. If you
+> prefer a hard lock, set `".write": false` and stop publishing to Firebase
+> entirely — read the URL from `/run/tunnel-url` instead.
+>
 > The `apiKey` in the Firebase config is **not** used anywhere in this project:
 > the Realtime Database REST API does not need it, and no Firebase code ever runs
 > in the browser.
@@ -132,9 +145,11 @@ If the public URL loads but the terminal stays blank, check in this order:
 ## Known caveats
 
 - **Port 8080 cannot be previewed.** 8080 is the port this proxy itself listens
-  on, so `/port/8080/` would recurse back into nginx; the route answers with an
-  explanation page instead (see the `location ~ ^/port/8080` block in
-  `nginx.conf`). Run apps on any other port.
+  on, so `/port/8080/` would recurse back into nginx. It is listed in the panel
+  but marked *in use by this proxy*, its button is disabled, and typing 8080 in
+  the custom-port field explains why instead of loading a dead frame; the server
+  answers `/port/8080/` with the same explanation (see the `location ~
+  ^/port/8080` block in `nginx.conf`). Run apps on any other port.
 - **ngrok's free tier shows a one-time interstitial** ("You are about to visit…")
   on the first browser navigation. Click through once — the cookie covers the
   rest of the session, including the terminal WebSocket.

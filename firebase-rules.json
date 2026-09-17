@@ -2,7 +2,7 @@
   "rules": {
     "tunnel": {
       ".read": true,
-      ".write": false
+      ".write": "auth != null"
     }
   }
 }

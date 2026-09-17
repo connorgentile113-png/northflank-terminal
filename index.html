@@ -372,6 +372,11 @@
     color: var(--warn);
   }
 
+  /* Reserved rows: the proxy owns the port, so there is nothing to open. */
+  .ports li.is-reserved { background: rgba(255, 255, 255, 0.012); cursor: help; }
+  .ports li.is-reserved .ports__num { color: var(--muted); }
+  .ports li.is-reserved:hover { border-color: var(--border); background: rgba(255, 255, 255, 0.012); }
+
   .btn {
     appearance: none;
     cursor: pointer;
@@ -581,9 +586,16 @@
   // Keep in sync with PORT_LIST in the Dockerfile / northflank.json.
   var DEFAULT_PORTS = [3000, 4200, 5173, 8000, 8080, 8888];
 
-  // 8080 is the port this proxy listens on; the server answers with an
-  // explanation page instead of looping the request back into nginx.
-  var RESERVED_PORTS = { 8080: 'proxy port' };
+  // Ports the preview proxy cannot serve because it is already using them.
+  // nginx owns 8080 — the port ngrok tunnels and the platform health-checks —
+  // so /port/8080/ would loop back into nginx; the server answers there with an
+  // explanation page, and this UI refuses to load it rather than showing a dead
+  // frame. Keep in sync with `listen 8080` and the /port/8080 guard in nginx.conf.
+  var RESERVED_PORTS = { 8080: 'in use by this proxy' };
+
+  var RESERVED_REASON = 'Port 8080 belongs to this proxy, so it cannot be ' +
+    'previewed. Run your app on another port — 3000, 4200, 5173, 8000, 8888 ' +
+    'or any free one.';
 
   var TERMINAL_SRC = '/terminal/';
 
@@ -695,18 +707,30 @@
 
       label.appendChild(num);
 
-      if (RESERVED_PORTS[port]) {
+      var reserved = RESERVED_PORTS[port];
+
+      if (reserved) {
         var note = document.createElement('span');
         note.className = 'ports__note';
-        note.textContent = RESERVED_PORTS[port];
+        note.textContent = reserved;
         label.appendChild(note);
+        row.className = 'is-reserved';
+        row.setAttribute('title', RESERVED_REASON);
       }
 
       open.className = 'btn';
       open.type = 'button';
-      open.textContent = 'Open';
       open.setAttribute('aria-label', 'Open port ' + port);
-      open.addEventListener('click', function () { openPort(port); });
+
+      if (reserved) {
+        // Disabled, not clickable: there is nothing to open, and a dead iframe
+        // just reads as "the preview is broken".
+        open.textContent = 'In use';
+        open.disabled = true;
+      } else {
+        open.textContent = 'Open';
+        open.addEventListener('click', function () { openPort(port); });
+      }
 
       row.dataset.port = String(port);
       row.appendChild(label);
@@ -724,6 +748,14 @@
   /* -- preview ------------------------------------------------------------- */
 
   function openPort(port, options) {
+    // Also covers the custom-port field and ?port=8080 deep links, which do not
+    // go through the (disabled) button above.
+    if (RESERVED_PORTS[port]) {
+      openPanel();
+      toast(RESERVED_REASON);
+      return;
+    }
+
     var path = previewPath(port);
 
     // Point the panel's own iframe at the proxied port. The terminal iframe is

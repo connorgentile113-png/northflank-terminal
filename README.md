@@ -158,6 +158,12 @@ If the public URL loads but the terminal stays blank, check in this order:
   `REPLACE_WITH_NGROK_AUTHTOKEN` placeholder — put the real value in a Northflank
   secret group or runtime variable. The container only ever reads it from the
   environment and never logs it, so no rebuild is needed to change it.
+- **supervisord `command` lines are Python `%`-formatted.** A literal percent
+  sign must be written `%%`. A `date +%FT%TZ` argument, for instance, parses as a
+  float conversion and supervisord aborts at startup with
+  `is badly formatted: must be real number, not dict`. The keepalive program
+  therefore uses `date -Iseconds`. If you edit these lines, read every `%` in
+  them as a format spec and escape anything that is meant literally.
 - **512 MB is tight.** Install AI CLIs one at a time
   (`npm i -g @openai/codex`, `pip install aider-chat`); if node gets OOM-killed
   during an install, retry with `NODE_OPTIONS=--max-old-space-size=384`. The
